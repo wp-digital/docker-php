@@ -3,10 +3,21 @@ set -eu
 
 image="${1:-docker-php/php-7.4-newrelic-10.7.0.319:local}"
 platform="${2:-linux/amd64}"
-expected_php_version='7.4.33'
-expected_patch_commit='712e60f9edfd03f0960fc4fc3c2c375f42b90aa2'
-provenance_file='/usr/local/share/php-security-patches/php-7.4-cve-2026-109618-109619.md'
+expected_php_series="${EXPECTED_PHP_SERIES-7.4}"
+expected_php_version="${EXPECTED_PHP_VERSION-7.4.33}"
+expected_patch_commit="${EXPECTED_PATCH_COMMIT-712e60f9edfd03f0960fc4fc3c2c375f42b90aa2}"
+security_patch_file="${SECURITY_PATCH_FILE-php-7.4-cve-2026-109618-109619.patch}"
 container_id=''
+
+if [ -z "$expected_php_series" ]; then
+	echo 'EXPECTED_PHP_SERIES must not be empty' >&2
+	exit 1
+fi
+
+if [ -n "$expected_patch_commit" ] && [ -z "$security_patch_file" ]; then
+	echo 'SECURITY_PATCH_FILE must not be empty when EXPECTED_PATCH_COMMIT is set' >&2
+	exit 1
+fi
 
 cleanup() {
 	if [ -n "$container_id" ]; then
@@ -21,10 +32,17 @@ docker image inspect "$image" >/dev/null
 
 echo 'Checking PHP version'
 actual_php_version="$(docker run --rm --platform "$platform" --entrypoint php "$image" -r 'echo PHP_VERSION;')"
-if [ "$actual_php_version" != "$expected_php_version" ]; then
+if [ -n "$expected_php_version" ] && [ "$actual_php_version" != "$expected_php_version" ]; then
 	echo "Expected PHP $expected_php_version, got $actual_php_version" >&2
 	exit 1
 fi
+case "$actual_php_version" in
+	"$expected_php_series".*) ;;
+	*)
+		echo "Expected PHP $expected_php_series.x, got $actual_php_version" >&2
+		exit 1
+		;;
+esac
 
 echo 'Checking required PHP extensions'
 modules="$(docker run --rm --platform "$platform" --entrypoint php "$image" -m)"
@@ -46,17 +64,20 @@ echo 'Checking PHP-FPM configuration'
 docker run --rm --platform "$platform" "$image" php-fpm -tt >/dev/null
 
 echo 'Checking security patch provenance'
-actual_patch_commit="$(
-	docker image inspect \
-		--format '{{ index .Config.Labels "com.wp-digital.php.security-patch.commit" }}' \
-		"$image"
-)"
-if [ "$actual_patch_commit" != "$expected_patch_commit" ]; then
-	echo "Unexpected security patch commit label: $actual_patch_commit" >&2
-	exit 1
+if [ -n "$expected_patch_commit" ]; then
+	actual_patch_commit="$(
+		docker image inspect \
+			--format '{{ index .Config.Labels "com.wp-digital.php.security-patch.commit" }}' \
+			"$image"
+	)"
+	if [ "$actual_patch_commit" != "$expected_patch_commit" ]; then
+		echo "Unexpected security patch commit label: $actual_patch_commit" >&2
+		exit 1
+	fi
+	provenance_file="/usr/local/share/php-security-patches/${security_patch_file%.patch}.md"
+	docker run --rm --platform "$platform" --entrypoint sh "$image" -eu -c \
+		'test -s "$1" && grep -Fq "$2" "$1"' sh "$provenance_file" "$expected_patch_commit"
 fi
-docker run --rm --platform "$platform" --entrypoint sh "$image" -eu -c \
-	"test -s '$provenance_file' && grep -Fq '$expected_patch_commit' '$provenance_file'"
 
 echo 'Checking New Relic entrypoint configuration'
 docker run --rm \
@@ -83,4 +104,4 @@ docker exec "$container_id" php -r 'echo "PHP-FPM runtime OK", PHP_EOL;' \
 cleanup
 container_id=''
 
-echo 'All PHP 7.4 image smoke tests passed.'
+echo "All PHP $expected_php_series image smoke tests passed."

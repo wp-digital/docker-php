@@ -33,6 +33,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/php-${{ inputs.PHPVersion }}-newrelic-${{ inputs.NewRelicPHPAgent }}
 
     steps:
       - name: Checkout repository
@@ -111,7 +113,6 @@ jobs:
 
       - name: Ensure release tag does not already exist
         env:
-          IMAGE: ghcr.io/${{ github.repository }}/php-${{ inputs.PHPVersion }}-newrelic-${{ inputs.NewRelicPHPAgent }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -120,7 +121,8 @@ jobs:
             exit 1
           fi
 
-      - name: Build and push PHP image
+      - name: Build candidate image
+        id: candidate
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -128,9 +130,7 @@ jobs:
           platforms: linux/amd64
           pull: true
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}/php-${{ inputs.PHPVersion }}-newrelic-${{ inputs.NewRelicPHPAgent }}:${{ inputs.version }}
-            ghcr.io/${{ github.repository }}/php-${{ inputs.PHPVersion }}-newrelic-${{ inputs.NewRelicPHPAgent }}:sha-${{ github.sha }}
+          tags: ${{ env.IMAGE }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -147,3 +147,34 @@ jobs:
             NEWRELIC_PHP_AGENT_SHA256=${{ inputs.NewRelicPHPAgentSHA256 }}
           cache-from: type=gha,scope=php-${{ inputs.PHPVersion }}
           cache-to: type=gha,mode=max,scope=php-${{ inputs.PHPVersion }}
+
+      - name: Smoke test candidate image
+        env:
+          CANDIDATE_DIGEST: ${{ steps.candidate.outputs.digest }}
+          EXPECTED_PHP_SERIES: ${{ inputs.PHPVersion }}
+          EXPECTED_PHP_VERSION: ${{ steps.php_profile.outputs.expected_version }}
+          EXPECTED_PATCH_COMMIT: ${{ steps.php_profile.outputs.patch_commit }}
+          SECURITY_PATCH_FILE: ${{ steps.php_profile.outputs.patch_file }}
+        run: |
+          set -euo pipefail
+
+          [[ "$CANDIDATE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+            echo "Invalid candidate digest: $CANDIDATE_DIGEST" >&2
+            exit 1
+          }
+          candidate_reference="$IMAGE@$CANDIDATE_DIGEST"
+          docker pull --platform linux/amd64 "$candidate_reference"
+          sh scripts/smoke-test.sh "$candidate_reference" linux/amd64
+
+      - name: Publish tested candidate image
+        env:
+          CANDIDATE_DIGEST: ${{ steps.candidate.outputs.digest }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "$IMAGE:sha-${GITHUB_SHA}" \
+            --tag "$IMAGE:$RELEASE_VERSION" \
+            "$IMAGE@$CANDIDATE_DIGEST"
