@@ -172,10 +172,10 @@ RUN set -eux; \
 		soap \
 		zip \
 	; \
-	curl -fsSL -o /tmp/imagick.tgz "https://pecl.php.net/get/imagick-${IMAGICK_VERSION}.tgz"; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/imagick.tgz "https://pecl.php.net/get/imagick-${IMAGICK_VERSION}.tgz"; \
 	echo "${IMAGICK_SHA256} */tmp/imagick.tgz" | sha256sum -c -; \
 	pecl install /tmp/imagick.tgz; \
-	curl -fsSL -o /tmp/redis.tgz "https://pecl.php.net/get/redis-${REDIS_VERSION}.tgz"; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/redis.tgz "https://pecl.php.net/get/redis-${REDIS_VERSION}.tgz"; \
 	echo "${REDIS_SHA256} */tmp/redis.tgz" | sha256sum -c -; \
 	pecl install /tmp/redis.tgz; \
 	docker-php-ext-enable imagick redis; \
@@ -228,7 +228,7 @@ COPY --from=composer-bin /usr/bin/composer /usr/local/bin/composer
 
 # Install WP-CLI from an immutable release and verify the downloaded artifact.
 RUN set -eux; \
-	curl -fsSL -o /usr/local/bin/wp "https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}/wp-cli-${WP_CLI_VERSION}.phar"; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /usr/local/bin/wp "https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}/wp-cli-${WP_CLI_VERSION}.phar"; \
 	echo "${WP_CLI_SHA256} */usr/local/bin/wp" | sha256sum -c -; \
 	chmod +x /usr/local/bin/wp
 
@@ -242,7 +242,7 @@ RUN set -eux; \
 	fi; \
 	apk add --no-cache gcompat; \
 	mkdir -p /etc/init.d /etc/conf.d; \
-	curl -fsSL -o /tmp/newrelic.tar.gz "https://download.newrelic.com/php_agent/archive/${NEWRELIC_PHP_AGENT}/newrelic-php5-${NEWRELIC_PHP_AGENT}-linux-musl.tar.gz"; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/newrelic.tar.gz "https://download.newrelic.com/php_agent/archive/${NEWRELIC_PHP_AGENT}/newrelic-php5-${NEWRELIC_PHP_AGENT}-linux-musl.tar.gz"; \
 	echo "${NEWRELIC_PHP_AGENT_SHA256} */tmp/newrelic.tar.gz" | sha256sum -c -; \
 	tar -xzf /tmp/newrelic.tar.gz -C /tmp; \
 	rm -f /tmp/newrelic.tar.gz; \
