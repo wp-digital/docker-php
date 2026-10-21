@@ -61,7 +61,29 @@ docker run --rm --platform "$platform" --entrypoint wp "$image" cli version \
 	| grep -Fxq 'WP-CLI 2.12.0'
 
 echo 'Checking PHP-FPM configuration'
-docker run --rm --platform "$platform" "$image" php-fpm -tt >/dev/null
+if ! docker run --rm --platform "$platform" "$image" \
+	php-fpm -d newrelic.daemon.dont_launch=3 -tt >/dev/null; then
+	echo 'PHP-FPM failed with the complete extension configuration; running diagnostics' >&2
+
+	echo 'Diagnostic: PHP-FPM core without php.ini files' >&2
+	docker run --rm --platform "$platform" --entrypoint php-fpm "$image" \
+		-n -tt >/dev/null || true
+
+	echo 'Diagnostic: PHP-FPM with only New Relic loaded' >&2
+	docker run --rm --platform "$platform" --entrypoint php-fpm "$image" \
+		-n \
+		-d extension=newrelic.so \
+		-d newrelic.daemon.dont_launch=3 \
+		-tt >/dev/null || true
+
+	echo 'Diagnostic: complete configuration without New Relic' >&2
+	docker run --rm --platform "$platform" --entrypoint sh "$image" -eu -c '
+		mv /usr/local/etc/php/conf.d/newrelic.ini /tmp/newrelic.ini
+		exec php-fpm -tt
+	' >/dev/null || true
+
+	exit 1
+fi
 
 echo 'Checking security patch provenance'
 if [ -n "$expected_patch_commit" ]; then
@@ -92,7 +114,13 @@ docker run --rm \
 	'
 
 echo 'Checking that the default PHP-FPM process stays running'
-container_id="$(docker run --detach --platform "$platform" "$image")"
+container_id="$(
+	docker run --detach \
+		--platform "$platform" \
+		-e NEWRELIC_LICENSE=smoke-test-license \
+		-e NEWRELIC_APP_NAME=docker-php-smoke-test \
+		"$image"
+)"
 sleep 2
 if [ "$(docker inspect --format '{{ .State.Running }}' "$container_id")" != 'true' ]; then
 	docker logs "$container_id" >&2
