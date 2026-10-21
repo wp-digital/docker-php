@@ -35,7 +35,6 @@ jobs:
       packages: write
     env:
       IMAGE: ghcr.io/${{ github.repository }}/php-${{ inputs.PHPVersion }}-newrelic-${{ inputs.NewRelicPHPAgent }}
-      CANDIDATE_TAG: ghcr.io/${{ github.repository }}/php-${{ inputs.PHPVersion }}-newrelic-${{ inputs.NewRelicPHPAgent }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout repository
@@ -126,7 +125,6 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        if: false
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -134,7 +132,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Ensure release tag does not already exist
-        if: false
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
@@ -152,9 +149,8 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64
           pull: true
-          push: false
-          load: true
-          tags: ${{ env.CANDIDATE_TAG }}
+          push: true
+          tags: ${{ env.IMAGE }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -176,6 +172,7 @@ jobs:
 
       - name: Smoke test candidate image
         env:
+          CANDIDATE_DIGEST: ${{ steps.candidate.outputs.digest }}
           EXPECTED_PHP_SERIES: ${{ inputs.PHPVersion }}
           EXPECTED_PHP_VERSION: ${{ steps.php_profile.outputs.expected_version }}
           EXPECTED_PATCH_COMMIT: ${{ steps.php_profile.outputs.patch_commit }}
@@ -183,11 +180,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          docker image inspect "$CANDIDATE_TAG" >/dev/null
-          sh scripts/smoke-test.sh "$CANDIDATE_TAG" linux/amd64
+          [[ "$CANDIDATE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+            echo "Invalid candidate digest: $CANDIDATE_DIGEST" >&2
+            exit 1
+          }
+          candidate_reference="$IMAGE@$CANDIDATE_DIGEST"
+          docker pull --platform linux/amd64 "$candidate_reference"
+          sh scripts/smoke-test.sh "$candidate_reference" linux/amd64
 
       - name: Publish tested candidate image
-        if: false
         env:
           CANDIDATE_DIGEST: ${{ steps.candidate.outputs.digest }}
           RELEASE_VERSION: ${{ inputs.version }}
