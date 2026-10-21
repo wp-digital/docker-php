@@ -1,20 +1,31 @@
-name: Create and publish a Docker image
+name: Publish PHP image
 
 on:
   workflow_dispatch:
     inputs:
       PHPVersion:
-        description: 'PHP version'
+        description: PHP major/minor version
         required: true
-        default: '8.2'
+        default: '7.4'
+        type: string
       NewRelicPHPAgent:
-        description: 'New Relic PHP agent'
+        description: New Relic PHP agent version
         required: true
         default: '10.7.0.319'
-      version:
-        description: 'Version'
+        type: string
+      NewRelicPHPAgentSHA256:
+        description: SHA-256 of the New Relic musl archive
         required: true
-        default: 'latest'
+        default: '64d81d741d0e278d27a5ce96bbc6c8849f7f3fc42a49c81e3795af076e93a7ef'
+        type: string
+      version:
+        description: Immutable release tag (for example, 7.4.33-cve-2026-109618-109619-r1)
+        required: true
+        type: string
+
+concurrency:
+  group: publish-php-${{ inputs.PHPVersion }}
+  cancel-in-progress: false
 
 jobs:
   build-and-push-image:
@@ -22,24 +33,148 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/php-${{ inputs.PHPVersion }}-newrelic-${{ inputs.NewRelicPHPAgent }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v2
+      - name: Validate inputs
+        env:
+          PHP_VERSION: ${{ inputs.PHPVersion }}
+          NEWRELIC_VERSION: ${{ inputs.NewRelicPHPAgent }}
+          NEWRELIC_SHA256: ${{ inputs.NewRelicPHPAgentSHA256 }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          [[ "$PHP_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || {
+            echo "Invalid PHP version: $PHP_VERSION" >&2
+            exit 1
+          }
+          [[ "$NEWRELIC_VERSION" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || {
+            echo "Invalid New Relic version: $NEWRELIC_VERSION" >&2
+            exit 1
+          }
+          [[ "$NEWRELIC_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            echo 'New Relic SHA-256 must contain exactly 64 lowercase hexadecimal characters' >&2
+            exit 1
+          }
+          [[ "$RELEASE_VERSION" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] || {
+            echo "Invalid release tag: $RELEASE_VERSION" >&2
+            exit 1
+          }
+          if [[ "$RELEASE_VERSION" == 'latest' ]]; then
+            echo 'The latest tag is intentionally not published by this workflow' >&2
+            exit 1
+          fi
+
+      - name: Resolve PHP build profile
+        id: php_profile
+        env:
+          PHP_VERSION: ${{ inputs.PHPVersion }}
+        run: |
+          set -euo pipefail
+
+          case "$PHP_VERSION" in
+            7.4)
+              {
+                echo 'base_image=php:7.4.33-fpm-alpine3.16@sha256:0aeb129a60daff2874c5c70fcd9d88cdf3015b4fb4cc7c3f1a32a21e84631036'
+                echo 'expected_version=7.4.33'
+                echo 'patch_file=php-7.4-cve-2026-109618-109619.patch'
+                echo 'patch_ids=CVE-2026-109618,CVE-2026-109619'
+                echo 'patch_commit=712e60f9edfd03f0960fc4fc3c2c375f42b90aa2'
+                echo 'patch_sha256=4ce7225e512ed559ac92ef9934f00399b1083f5371dc82e1c535bdfa9d74664f'
+              } >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::warning::PHP $PHP_VERSION has no pinned security profile; using the official floating Alpine tag without a PHP core patch"
+              {
+                echo "base_image=php:${PHP_VERSION}-fpm-alpine"
+                echo 'expected_version='
+                echo 'patch_file='
+                echo 'patch_ids='
+                echo 'patch_commit='
+                echo 'patch_sha256='
+              } >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image for PHP ${{ github.event.inputs.PHPVersion }} with New Relic PHP agent ${{ github.event.inputs.NewRelicPHPAgent }}
-        uses: docker/build-push-action@v4
+      - name: Ensure release tag does not already exist
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$IMAGE:$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing image tag: $IMAGE:$RELEASE_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Build candidate image
+        id: candidate
+        uses: docker/build-push-action@v7
         with:
           context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          pull: true
           push: true
-          tags: ghcr.io/${{ github.repository }}/php-${{ github.event.inputs.PHPVersion }}-newrelic-${{ github.event.inputs.NewRelicPHPAgent }}:${{ github.event.inputs.version }}
+          tags: ${{ env.IMAGE }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
           build-args: |
-            PHP_VERSION=${{ github.event.inputs.PHPVersion }}
-            NEWRELIC_PHP_AGENT=${{ github.event.inputs.NewRelicPHPAgent }}
+            PHP_BASE_IMAGE=${{ steps.php_profile.outputs.base_image }}
+            PHP_VERSION_SERIES=${{ inputs.PHPVersion }}
+            PHP_EXPECTED_VERSION=${{ steps.php_profile.outputs.expected_version }}
+            PHP_SECURITY_PATCH_FILE=${{ steps.php_profile.outputs.patch_file }}
+            PHP_SECURITY_PATCH_IDS=${{ steps.php_profile.outputs.patch_ids }}
+            PHP_SECURITY_PATCH_COMMIT=${{ steps.php_profile.outputs.patch_commit }}
+            PHP_SECURITY_PATCH_SHA256=${{ steps.php_profile.outputs.patch_sha256 }}
+            NEWRELIC_PHP_AGENT=${{ inputs.NewRelicPHPAgent }}
+            NEWRELIC_PHP_AGENT_SHA256=${{ inputs.NewRelicPHPAgentSHA256 }}
+          cache-from: type=gha,scope=php-${{ inputs.PHPVersion }}
+          cache-to: type=gha,mode=max,scope=php-${{ inputs.PHPVersion }}
+
+      - name: Smoke test candidate image
+        env:
+          CANDIDATE_DIGEST: ${{ steps.candidate.outputs.digest }}
+          EXPECTED_PHP_SERIES: ${{ inputs.PHPVersion }}
+          EXPECTED_PHP_VERSION: ${{ steps.php_profile.outputs.expected_version }}
+          EXPECTED_PATCH_COMMIT: ${{ steps.php_profile.outputs.patch_commit }}
+          SECURITY_PATCH_FILE: ${{ steps.php_profile.outputs.patch_file }}
+        run: |
+          set -euo pipefail
+
+          [[ "$CANDIDATE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+            echo "Invalid candidate digest: $CANDIDATE_DIGEST" >&2
+            exit 1
+          }
+          candidate_reference="$IMAGE@$CANDIDATE_DIGEST"
+          docker pull --platform linux/amd64 "$candidate_reference"
+          sh scripts/smoke-test.sh "$candidate_reference" linux/amd64
+
+      - name: Publish tested candidate image
+        env:
+          CANDIDATE_DIGEST: ${{ steps.candidate.outputs.digest }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "$IMAGE:sha-${GITHUB_SHA}" \
+            --tag "$IMAGE:$RELEASE_VERSION" \
+            "$IMAGE@$CANDIDATE_DIGEST"
