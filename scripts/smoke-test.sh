@@ -54,6 +54,38 @@ for extension in bcmath exif gd imagick intl mysqli newrelic redis SimpleXML soa
 done
 printf '%s\n' "$modules" | grep -Fxq 'Zend OPcache'
 
+actual_php_major="${actual_php_version%%.*}"
+if [ "$actual_php_major" -ge 8 ]; then
+	echo 'Checking E_DONT_BAIL behavior with New Relic'
+	if dont_bail_output="$(
+		docker run --rm \
+			--platform "$platform" \
+			-e NEWRELIC_LICENSE=smoke-test-license \
+			-e NEWRELIC_APP_NAME=docker-php-smoke-test \
+			"$image" \
+			php -d newrelic.daemon.dont_launch=3 -r '
+				final class DestructorProbe
+				{
+					public function __destruct()
+					{
+						echo "E_DONT_BAIL destructor executed", PHP_EOL;
+					}
+				}
+
+				$probe = new DestructorProbe();
+				throw new RuntimeException("E_DONT_BAIL regression probe");
+			' 2>&1
+	)"; then
+		echo 'Expected the E_DONT_BAIL regression probe to terminate with an uncaught exception' >&2
+		exit 1
+	fi
+	if ! printf '%s\n' "$dont_bail_output" | grep -Fq 'E_DONT_BAIL destructor executed'; then
+		echo 'Destructor did not run after the uncaught exception with New Relic loaded' >&2
+		printf '%s\n' "$dont_bail_output" >&2
+		exit 1
+	fi
+fi
+
 echo 'Checking bundled tools'
 docker run --rm --platform "$platform" --entrypoint composer "$image" --version --no-ansi 2>&1 \
 	| grep -Fq 'Composer version 2.10.1'

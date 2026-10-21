@@ -76,6 +76,8 @@ docker buildx build \
 The patched PHP 8 error flow requires New Relic 12.12.0.41 or newer. Older
 agents, including 10.7.0.319, do not preserve `E_DONT_BAIL` when forwarding
 errors to PHP and therefore do not preserve the patched PHP error semantics.
+The release-gate smoke test verifies this behavior by requiring an object's
+destructor to run after an uncaught exception with New Relic loaded.
 
 Run the same release-gate smoke checks with the 8.1 expectations:
 
