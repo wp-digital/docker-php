@@ -127,7 +127,7 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64
           pull: true
-          push: false
+          push: true
           tags: |
             ghcr.io/${{ github.repository }}/php-${{ inputs.PHPVersion }}-newrelic-${{ inputs.NewRelicPHPAgent }}:${{ inputs.version }}
             ghcr.io/${{ github.repository }}/php-${{ inputs.PHPVersion }}-newrelic-${{ inputs.NewRelicPHPAgent }}:sha-${{ github.sha }}
