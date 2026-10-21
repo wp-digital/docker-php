@@ -5,6 +5,8 @@ ARG PHP_SECURITY_PATCH_FILE=php-7.4-cve-2026-109618-109619.patch
 ARG PHP_SECURITY_PATCH_IDS=CVE-2026-109618,CVE-2026-109619
 ARG PHP_SECURITY_PATCH_COMMIT=712e60f9edfd03f0960fc4fc3c2c375f42b90aa2
 ARG PHP_SECURITY_PATCH_SHA256=4ce7225e512ed559ac92ef9934f00399b1083f5371dc82e1c535bdfa9d74664f
+ARG PHP_REBUILD_COMPAT_PATCH_FILE=
+ARG PHP_REBUILD_COMPAT_PATCH_SHA256=
 ARG COMPOSER_IMAGE=composer:2.10.1@sha256:7725eb4545c438629ae8bde3ef0bb9a5038ef566126ad878442a69007242d267
 
 FROM ${COMPOSER_IMAGE} AS composer-bin
@@ -14,6 +16,8 @@ FROM ${PHP_BASE_IMAGE} AS patched-php
 ARG PHP_EXPECTED_VERSION
 ARG PHP_SECURITY_PATCH_FILE
 ARG PHP_SECURITY_PATCH_SHA256
+ARG PHP_REBUILD_COMPAT_PATCH_FILE
+ARG PHP_REBUILD_COMPAT_PATCH_SHA256
 
 COPY patches/ /tmp/php-security-patches/
 
@@ -21,6 +25,8 @@ COPY patches/ /tmp/php-security-patches/
 # rebuilds the exact source and configure options bundled in that base image.
 RUN set -eux; \
 	if [ -z "$PHP_SECURITY_PATCH_FILE" ]; then \
+		[ -z "$PHP_REBUILD_COMPAT_PATCH_FILE" ]; \
+		[ -z "$PHP_REBUILD_COMPAT_PATCH_SHA256" ]; \
 		rm -rf /tmp/php-security-patches; \
 		php --version; \
 		exit 0; \
@@ -34,6 +40,18 @@ RUN set -eux; \
 	patchPath="/tmp/php-security-patches/$PHP_SECURITY_PATCH_FILE"; \
 	[ -f "$patchPath" ]; \
 	echo "${PHP_SECURITY_PATCH_SHA256} *${patchPath}" | sha256sum -c -; \
+	compatPatchPath=''; \
+	if [ -n "$PHP_REBUILD_COMPAT_PATCH_FILE" ]; then \
+		case "$PHP_REBUILD_COMPAT_PATCH_FILE" in \
+			*[!a-zA-Z0-9._-]*) echo "Invalid compatibility patch filename: $PHP_REBUILD_COMPAT_PATCH_FILE" >&2; exit 1 ;; \
+		esac; \
+		[ -n "$PHP_REBUILD_COMPAT_PATCH_SHA256" ]; \
+		compatPatchPath="/tmp/php-security-patches/$PHP_REBUILD_COMPAT_PATCH_FILE"; \
+		[ -f "$compatPatchPath" ]; \
+		echo "${PHP_REBUILD_COMPAT_PATCH_SHA256} *${compatPatchPath}" | sha256sum -c -; \
+	else \
+		[ -z "$PHP_REBUILD_COMPAT_PATCH_SHA256" ]; \
+	fi; \
 	mkdir -p /usr/local/share/php-security-patches; \
 	cp /tmp/php-security-patches/README.md \
 		"/usr/local/share/php-security-patches/${PHP_SECURITY_PATCH_FILE%.patch}.md"; \
@@ -61,6 +79,9 @@ RUN set -eux; \
 	; \
 	docker-php-source extract; \
 	cd /usr/src/php; \
+	if [ -n "$compatPatchPath" ]; then \
+		patch --batch --forward --fuzz=0 -p1 < "$compatPatchPath"; \
+	fi; \
 	patch --batch --forward --fuzz=0 -p1 < "$patchPath"; \
 	configureOptions="$(php-config --configure-options)"; \
 	./configure $configureOptions; \
@@ -94,6 +115,8 @@ ARG PHP_SECURITY_PATCH_FILE
 ARG PHP_SECURITY_PATCH_IDS
 ARG PHP_SECURITY_PATCH_COMMIT
 ARG PHP_SECURITY_PATCH_SHA256
+ARG PHP_REBUILD_COMPAT_PATCH_FILE
+ARG PHP_REBUILD_COMPAT_PATCH_SHA256
 ARG IMAGICK_VERSION=3.6.0
 ARG IMAGICK_SHA256=4e2965f2d70dd59a40e7957d56e590e731cad2669e9f89e0fca159d748d2947e
 ARG REDIS_VERSION=6.3.0
@@ -109,7 +132,9 @@ LABEL org.opencontainers.image.base.name="${PHP_BASE_IMAGE}" \
 	com.wp-digital.php.version-series="${PHP_VERSION_SERIES}" \
 	com.wp-digital.php.security-patch.ids="${PHP_SECURITY_PATCH_IDS}" \
 	com.wp-digital.php.security-patch.commit="${PHP_SECURITY_PATCH_COMMIT}" \
-	com.wp-digital.php.security-patch.sha256="${PHP_SECURITY_PATCH_SHA256}"
+	com.wp-digital.php.security-patch.sha256="${PHP_SECURITY_PATCH_SHA256}" \
+	com.wp-digital.php.rebuild-compat-patch.file="${PHP_REBUILD_COMPAT_PATCH_FILE}" \
+	com.wp-digital.php.rebuild-compat-patch.sha256="${PHP_REBUILD_COMPAT_PATCH_SHA256}"
 
 # Persistent dependencies.
 RUN set -eux; \
@@ -147,10 +172,10 @@ RUN set -eux; \
 		soap \
 		zip \
 	; \
-	curl -fsSL -o /tmp/imagick.tgz "https://pecl.php.net/get/imagick-${IMAGICK_VERSION}.tgz"; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/imagick.tgz "https://pecl.php.net/get/imagick-${IMAGICK_VERSION}.tgz"; \
 	echo "${IMAGICK_SHA256} */tmp/imagick.tgz" | sha256sum -c -; \
 	pecl install /tmp/imagick.tgz; \
-	curl -fsSL -o /tmp/redis.tgz "https://pecl.php.net/get/redis-${REDIS_VERSION}.tgz"; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/redis.tgz "https://pecl.php.net/get/redis-${REDIS_VERSION}.tgz"; \
 	echo "${REDIS_SHA256} */tmp/redis.tgz" | sha256sum -c -; \
 	pecl install /tmp/redis.tgz; \
 	docker-php-ext-enable imagick redis; \
@@ -203,16 +228,21 @@ COPY --from=composer-bin /usr/bin/composer /usr/local/bin/composer
 
 # Install WP-CLI from an immutable release and verify the downloaded artifact.
 RUN set -eux; \
-	curl -fsSL -o /usr/local/bin/wp "https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}/wp-cli-${WP_CLI_VERSION}.phar"; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /usr/local/bin/wp "https://github.com/wp-cli/wp-cli/releases/download/v${WP_CLI_VERSION}/wp-cli-${WP_CLI_VERSION}.phar"; \
 	echo "${WP_CLI_SHA256} */usr/local/bin/wp" | sha256sum -c -; \
 	chmod +x /usr/local/bin/wp
 
 ENV WP_CLI_ALLOW_ROOT=1
 
-# Install the New Relic agent from a checksummed archive.
+# Install the New Relic agent from a checksummed archive. Its installer expects
+# the standard Alpine OpenRC paths even when the base image omits OpenRC itself.
 RUN set -eux; \
+	if [ "$PHP_VERSION_SERIES" = '8.1' ]; then \
+		php -r 'if (version_compare($argv[1], "12.12.0.41", "<")) { fwrite(STDERR, "New Relic PHP agent 12.12.0.41 or newer is required for patched PHP 8.1" . PHP_EOL); exit(1); }' "$NEWRELIC_PHP_AGENT"; \
+	fi; \
 	apk add --no-cache gcompat; \
-	curl -fsSL -o /tmp/newrelic.tar.gz "https://download.newrelic.com/php_agent/archive/${NEWRELIC_PHP_AGENT}/newrelic-php5-${NEWRELIC_PHP_AGENT}-linux-musl.tar.gz"; \
+	mkdir -p /etc/init.d /etc/conf.d; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/newrelic.tar.gz "https://download.newrelic.com/php_agent/archive/${NEWRELIC_PHP_AGENT}/newrelic-php5-${NEWRELIC_PHP_AGENT}-linux-musl.tar.gz"; \
 	echo "${NEWRELIC_PHP_AGENT_SHA256} */tmp/newrelic.tar.gz" | sha256sum -c -; \
 	tar -xzf /tmp/newrelic.tar.gz -C /tmp; \
 	rm -f /tmp/newrelic.tar.gz; \
@@ -236,7 +266,7 @@ RUN set -eux; \
 	grep -Fxq 'Zend OPcache' /tmp/php-modules; \
 	composer --version; \
 	wp --info; \
-	php-fpm -tt; \
+	php-fpm -n -tt; \
 	if [ -n "$PHP_SECURITY_PATCH_FILE" ]; then \
 		test -s "/usr/local/share/php-security-patches/${PHP_SECURITY_PATCH_FILE%.patch}.md"; \
 	fi; \

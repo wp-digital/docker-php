@@ -54,6 +54,38 @@ for extension in bcmath exif gd imagick intl mysqli newrelic redis SimpleXML soa
 done
 printf '%s\n' "$modules" | grep -Fxq 'Zend OPcache'
 
+actual_php_major="${actual_php_version%%.*}"
+if [ "$actual_php_major" -ge 8 ]; then
+	echo 'Checking E_DONT_BAIL behavior with New Relic'
+	if dont_bail_output="$(
+		docker run --rm \
+			--platform "$platform" \
+			-e NEWRELIC_LICENSE=smoke-test-license \
+			-e NEWRELIC_APP_NAME=docker-php-smoke-test \
+			"$image" \
+			php -d newrelic.daemon.dont_launch=3 -r '
+				final class DestructorProbe
+				{
+					public function __destruct()
+					{
+						echo "E_DONT_BAIL destructor executed", PHP_EOL;
+					}
+				}
+
+				$probe = new DestructorProbe();
+				throw new RuntimeException("E_DONT_BAIL regression probe");
+			' 2>&1
+	)"; then
+		echo 'Expected the E_DONT_BAIL regression probe to terminate with an uncaught exception' >&2
+		exit 1
+	fi
+	if ! printf '%s\n' "$dont_bail_output" | grep -Fq 'E_DONT_BAIL destructor executed'; then
+		echo 'Destructor did not run after the uncaught exception with New Relic loaded' >&2
+		printf '%s\n' "$dont_bail_output" >&2
+		exit 1
+	fi
+fi
+
 echo 'Checking bundled tools'
 docker run --rm --platform "$platform" --entrypoint composer "$image" --version --no-ansi 2>&1 \
 	| grep -Fq 'Composer version 2.10.1'
@@ -61,7 +93,29 @@ docker run --rm --platform "$platform" --entrypoint wp "$image" cli version \
 	| grep -Fxq 'WP-CLI 2.12.0'
 
 echo 'Checking PHP-FPM configuration'
-docker run --rm --platform "$platform" "$image" php-fpm -tt >/dev/null
+if ! docker run --rm --platform "$platform" "$image" \
+	php-fpm -d newrelic.daemon.dont_launch=3 -tt >/dev/null; then
+	echo 'PHP-FPM failed with the complete extension configuration; running diagnostics' >&2
+
+	echo 'Diagnostic: PHP-FPM core without php.ini files' >&2
+	docker run --rm --platform "$platform" --entrypoint php-fpm "$image" \
+		-n -tt >/dev/null || true
+
+	echo 'Diagnostic: PHP-FPM with only New Relic loaded' >&2
+	docker run --rm --platform "$platform" --entrypoint php-fpm "$image" \
+		-n \
+		-d extension=newrelic.so \
+		-d newrelic.daemon.dont_launch=3 \
+		-tt >/dev/null || true
+
+	echo 'Diagnostic: complete configuration without New Relic' >&2
+	docker run --rm --platform "$platform" --entrypoint sh "$image" -eu -c '
+		mv /usr/local/etc/php/conf.d/newrelic.ini /tmp/newrelic.ini
+		exec php-fpm -tt
+	' >/dev/null || true
+
+	exit 1
+fi
 
 echo 'Checking security patch provenance'
 if [ -n "$expected_patch_commit" ]; then
@@ -92,7 +146,13 @@ docker run --rm \
 	'
 
 echo 'Checking that the default PHP-FPM process stays running'
-container_id="$(docker run --detach --platform "$platform" "$image")"
+container_id="$(
+	docker run --detach \
+		--platform "$platform" \
+		-e NEWRELIC_LICENSE=smoke-test-license \
+		-e NEWRELIC_APP_NAME=docker-php-smoke-test \
+		"$image"
+)"
 sleep 2
 if [ "$(docker inspect --format '{{ .State.Running }}' "$container_id")" != 'true' ]; then
 	docker logs "$container_id" >&2
