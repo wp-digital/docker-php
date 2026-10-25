@@ -237,9 +237,9 @@ ENV WP_CLI_ALLOW_ROOT=1
 # Install the New Relic agent from a checksummed archive. Its installer expects
 # the standard Alpine OpenRC paths even when the base image omits OpenRC itself.
 RUN set -eux; \
-	if [ "$PHP_VERSION_SERIES" = '8.1' ]; then \
-		php -r 'if (version_compare($argv[1], "12.12.0.41", "<")) { fwrite(STDERR, "New Relic PHP agent 12.12.0.41 or newer is required for patched PHP 8.1" . PHP_EOL); exit(1); }' "$NEWRELIC_PHP_AGENT"; \
-	fi; \
+	case "$PHP_VERSION_SERIES" in \
+		8.*) php -r 'if (version_compare($argv[1], "12.12.0.41", "<")) { fwrite(STDERR, "New Relic PHP agent 12.12.0.41 or newer is required for PHP 8 images" . PHP_EOL); exit(1); }' "$NEWRELIC_PHP_AGENT" ;; \
+	esac; \
 	apk add --no-cache gcompat; \
 	mkdir -p /etc/init.d /etc/conf.d; \
 	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/newrelic.tar.gz "https://download.newrelic.com/php_agent/archive/${NEWRELIC_PHP_AGENT}/newrelic-php5-${NEWRELIC_PHP_AGENT}-linux-musl.tar.gz"; \
