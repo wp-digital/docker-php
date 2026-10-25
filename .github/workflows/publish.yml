@@ -201,7 +201,6 @@ jobs:
           sh scripts/smoke-test.sh "$candidate_reference" linux/amd64
 
       - name: Publish tested candidate image
-        if: ${{ false }}
         env:
           CANDIDATE_DIGEST: ${{ steps.candidate.outputs.digest }}
           RELEASE_VERSION: ${{ inputs.version }}
