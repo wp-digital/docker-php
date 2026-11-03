@@ -179,6 +179,7 @@ RUN set -eux; \
 	echo "${REDIS_SHA256} */tmp/redis.tgz" | sha256sum -c -; \
 	pecl install /tmp/redis.tgz; \
 	docker-php-ext-enable imagick redis; \
+	[ "$(php -r 'echo phpversion("imagick");')" = "$IMAGICK_VERSION" ]; \
 	rm -rf /tmp/imagick.tgz /tmp/redis.tgz /tmp/pear; \
 	out="$(php -r 'exit(0);')"; \
 	[ -z "$out" ]; \
