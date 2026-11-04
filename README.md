@@ -11,6 +11,7 @@ security patch are build arguments resolved by the workflow.
 | 7.4 | Pinned PHP 7.4.33 Alpine 3.16 digest | CVE-2026-109618 and CVE-2026-109619 | Released and rollout-tested |
 | 8.1 | Pinned PHP 8.1.34 Alpine 3.22 digest | CVE-2026-109618 and CVE-2026-109619 | Configured for build testing |
 | 8.2 | Pinned PHP 8.2.35 Alpine 3.24 digest | None; fixed in the official upstream release | Configured for release |
+| 8.4 | Pinned PHP 8.4.27 Alpine 3.24 digest | None; fixed in the official upstream release | Configured for build testing |
 | Other | `php:<version>-fpm-alpine` | None | Generic compatibility path; not yet tested by this change |
 
 PHP 7.4 is end-of-life, so its profile rebuilds PHP 7.4.33 from the source
@@ -24,6 +25,10 @@ fixes used by the official Alpine 3.22 build before rebuilding PHP.
 The PHP 8.2 profile uses the official PHP 8.2.35 security release, where the
 fixes are already included upstream. It pins the Alpine 3.24 image digest and
 does not rebuild PHP or apply a repository-owned security patch.
+
+The PHP 8.4 profile follows the same upstream-fixed path with PHP 8.4.27. It
+pins the official Alpine 3.24 image digest and does not rebuild PHP or apply a
+repository-owned security patch.
 
 An unpatched profile skips the PHP core rebuild and continues from the selected
 official PHP base. Adding another patched profile requires adding its patch and
@@ -128,6 +133,45 @@ SECURITY_PATCH_FILE= \
 sh scripts/smoke-test.sh docker-php/php-8.2-newrelic-12.12.0.41:local
 ```
 
+## Local PHP 8.4 build
+
+Build and load the pinned upstream-fixed PHP 8.4 profile with:
+
+```sh
+docker buildx build \
+  --platform linux/amd64 \
+  --pull \
+  --load \
+  --build-arg PHP_BASE_IMAGE=php:8.4.27-fpm-alpine3.24@sha256:93aa3f61216b73cc6f878235c9772849449f4efc18dfe3d6678eed645076c00d \
+  --build-arg PHP_VERSION_SERIES=8.4 \
+  --build-arg PHP_EXPECTED_VERSION=8.4.27 \
+  --build-arg PHP_SECURITY_PATCH_FILE= \
+  --build-arg PHP_SECURITY_PATCH_IDS= \
+  --build-arg PHP_SECURITY_PATCH_COMMIT= \
+  --build-arg PHP_SECURITY_PATCH_SHA256= \
+  --build-arg PHP_REBUILD_COMPAT_PATCH_FILE= \
+  --build-arg PHP_REBUILD_COMPAT_PATCH_SHA256= \
+  --build-arg IMAGICK_VERSION=3.8.0 \
+  --build-arg IMAGICK_SHA256=bda67461c854f20d6105782b769c524fc37388b75d4481d951644d2167ffeec6 \
+  --build-arg NEWRELIC_PHP_AGENT=12.12.0.41 \
+  --build-arg NEWRELIC_PHP_AGENT_SHA256=b93a0f11dc9a65ae8ca992dc8edd8db756591eccbdb74308f744840acde4e24f \
+  --tag docker-php/php-8.4-newrelic-12.12.0.41:local \
+  .
+```
+
+PHP 8.4 requires Imagick 3.8.0, which contains the PHP 8.4 compile fix. The
+Dockerfile checks the loaded Imagick extension version after installation.
+
+Run the release-gate smoke checks without repository-owned patch expectations:
+
+```sh
+EXPECTED_PHP_SERIES=8.4 \
+EXPECTED_PHP_VERSION=8.4.27 \
+EXPECTED_PATCH_COMMIT= \
+SECURITY_PATCH_FILE= \
+sh scripts/smoke-test.sh docker-php/php-8.4-newrelic-12.12.0.41:local
+```
+
 ## Release
 
 Run the `Publish PHP image` workflow and provide:
@@ -152,6 +196,12 @@ For the first upstream-fixed PHP 8.2 release, use:
 
 ```text
 8.2.35-cve-2026-109618-109619-r1
+```
+
+For the first upstream-fixed PHP 8.4 release, use:
+
+```text
+8.4.27-cve-2026-109618-109619-r1
 ```
 
 Use New Relic PHP agent `12.12.0.41` with SHA-256

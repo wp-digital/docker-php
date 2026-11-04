@@ -92,6 +92,8 @@ jobs:
                 echo 'patch_sha256=4ce7225e512ed559ac92ef9934f00399b1083f5371dc82e1c535bdfa9d74664f'
                 echo 'compat_patch_file='
                 echo 'compat_patch_sha256='
+                echo 'imagick_version=3.6.0'
+                echo 'imagick_sha256=4e2965f2d70dd59a40e7957d56e590e731cad2669e9f89e0fca159d748d2947e'
               } >> "$GITHUB_OUTPUT"
               ;;
             8.1)
@@ -104,6 +106,8 @@ jobs:
                 echo 'patch_sha256=2c26157e765e982a872d8456520ec215c5f1516dcbc898477b9a8e9017ed0935'
                 echo 'compat_patch_file=php-8.1-alpine3.22-rebuild-compat.patch'
                 echo 'compat_patch_sha256=a141037dd52ff18cebad0e1c0b96b02ba14919ff57856ced7e253bb4d071272c'
+                echo 'imagick_version=3.6.0'
+                echo 'imagick_sha256=4e2965f2d70dd59a40e7957d56e590e731cad2669e9f89e0fca159d748d2947e'
               } >> "$GITHUB_OUTPUT"
               ;;
             8.2)
@@ -116,6 +120,22 @@ jobs:
                 echo 'patch_sha256='
                 echo 'compat_patch_file='
                 echo 'compat_patch_sha256='
+                echo 'imagick_version=3.6.0'
+                echo 'imagick_sha256=4e2965f2d70dd59a40e7957d56e590e731cad2669e9f89e0fca159d748d2947e'
+              } >> "$GITHUB_OUTPUT"
+              ;;
+            8.4)
+              {
+                echo 'base_image=php:8.4.27-fpm-alpine3.24@sha256:93aa3f61216b73cc6f878235c9772849449f4efc18dfe3d6678eed645076c00d'
+                echo 'expected_version=8.4.27'
+                echo 'patch_file='
+                echo 'patch_ids='
+                echo 'patch_commit='
+                echo 'patch_sha256='
+                echo 'compat_patch_file='
+                echo 'compat_patch_sha256='
+                echo 'imagick_version=3.8.0'
+                echo 'imagick_sha256=bda67461c854f20d6105782b769c524fc37388b75d4481d951644d2167ffeec6'
               } >> "$GITHUB_OUTPUT"
               ;;
             *)
@@ -129,6 +149,8 @@ jobs:
                 echo 'patch_sha256='
                 echo 'compat_patch_file='
                 echo 'compat_patch_sha256='
+                echo 'imagick_version=3.6.0'
+                echo 'imagick_sha256=4e2965f2d70dd59a40e7957d56e590e731cad2669e9f89e0fca159d748d2947e'
               } >> "$GITHUB_OUTPUT"
               ;;
           esac
@@ -177,6 +199,8 @@ jobs:
             PHP_SECURITY_PATCH_SHA256=${{ steps.php_profile.outputs.patch_sha256 }}
             PHP_REBUILD_COMPAT_PATCH_FILE=${{ steps.php_profile.outputs.compat_patch_file }}
             PHP_REBUILD_COMPAT_PATCH_SHA256=${{ steps.php_profile.outputs.compat_patch_sha256 }}
+            IMAGICK_VERSION=${{ steps.php_profile.outputs.imagick_version }}
+            IMAGICK_SHA256=${{ steps.php_profile.outputs.imagick_sha256 }}
             NEWRELIC_PHP_AGENT=${{ inputs.NewRelicPHPAgent }}
             NEWRELIC_PHP_AGENT_SHA256=${{ inputs.NewRelicPHPAgentSHA256 }}
           cache-from: type=gha,scope=php-${{ inputs.PHPVersion }}
